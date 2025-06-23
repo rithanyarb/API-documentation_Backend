@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+authlib
+python-jose[cryptography]
+python-multipart
+httpx
+python-dotenv
+pydantic-settings
+pyyaml
+openai
+gitpython
+pytest
+pytest-asyncio
