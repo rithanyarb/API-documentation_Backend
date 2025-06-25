@@ -15,6 +15,10 @@ from app.models.versionlog import VersionLog
 import yaml
 from fastapi import UploadFile, File
 from uuid import uuid4
+import logging
+import asyncio
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -28,9 +32,22 @@ class EndpointTestRequest(BaseModel):
 @router.post("/test-endpoint")
 async def test_single_endpoint(data: EndpointTestRequest):
     try:
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        logger.info(f"Testing endpoint: {data.method} {data.url}")
+        
+        timeout = httpx.Timeout(100.0, connect=10.0)  # 100s total, 10s connect
+        
+        async with httpx.AsyncClient(
+            follow_redirects=True, 
+            timeout=timeout,
+            verify=False  
+        ) as client:
             headers = data.headers.copy()
             content_type = headers.get("Content-Type", "application/json")
+
+            headers = {k: v for k, v in headers.items() if v is not None and v != ""}
+            
+            logger.info(f"Request headers: {headers}")
+            logger.info(f"Request body: {data.body}")
 
             if content_type == "application/x-www-form-urlencoded" and isinstance(data.body, dict):
                 response = await client.request(
@@ -40,22 +57,38 @@ async def test_single_endpoint(data: EndpointTestRequest):
                     data=data.body
                 )
             elif content_type == "multipart/form-data" and isinstance(data.body, dict):
+                multipart_headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
                 multipart_data = {k: (None, v) for k, v in data.body.items()}
-                headers.pop("Content-Type", None)
                 response = await client.request(
                     method=data.method.upper(),
                     url=data.url,
-                    headers=headers,
+                    headers=multipart_headers,
                     files=multipart_data
                 )
             else:
-                response = await client.request(
-                    method=data.method.upper(),
-                    url=data.url,
-                    headers=headers,
-                    content=data.body if isinstance(data.body, str) else None,
-                    json=data.body if isinstance(data.body, dict) else None
-                )
+                if data.body is None:
+                    response = await client.request(
+                        method=data.method.upper(),
+                        url=data.url,
+                        headers=headers
+                    )
+                elif isinstance(data.body, str):
+                    response = await client.request(
+                        method=data.method.upper(),
+                        url=data.url,
+                        headers=headers,
+                        content=data.body
+                    )
+                else:
+                    response = await client.request(
+                        method=data.method.upper(),
+                        url=data.url,
+                        headers=headers,
+                        json=data.body
+                    )
+
+        logger.info(f"Response status: {response.status_code}")
+        logger.info(f"Response headers: {dict(response.headers)}")
 
         return {
             "status_code": response.status_code,
@@ -65,8 +98,33 @@ async def test_single_endpoint(data: EndpointTestRequest):
             "method": data.method.upper()
         }
 
+    except httpx.TimeoutException as e:
+        logger.error(f"Timeout error: {str(e)}")
+        raise HTTPException(
+            status_code=408, 
+            detail=f"Request timeout: The target server took too long to respond"
+        )
+    except httpx.ConnectError as e:
+        logger.error(f"Connection error: {str(e)}")
+        raise HTTPException(
+            status_code=503, 
+            detail=f"Cannot connect to target server: {data.url}. Make sure the server is running and accessible."
+        )
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP status error: {str(e)}")
+        return {
+            "status_code": e.response.status_code,
+            "response_body": e.response.text,
+            "response_headers": dict(e.response.headers),
+            "request_url": str(e.request.url),
+            "method": data.method.upper()
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Test failed: {str(e)}"
+        )
 
 
 def normalize_path(p: str) -> str:

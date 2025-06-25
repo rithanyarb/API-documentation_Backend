@@ -1,4 +1,4 @@
-# === backend/app/services/openapi_parser.py ===
+# backend/app/services/openapi_parser.py
 from typing import Dict, Any
 import json
 import yaml
@@ -7,11 +7,10 @@ from app.models.endpoint import Endpoint
 from app.services.ai_service import generate_description
 
 def resolve_ref(ref: str, openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Resolve $ref strings like '#/components/schemas/NoteRequest'"""
     if not ref.startswith("#/"):
         return {}
     
-    # Remove the '#/' prefix and split the path
+    # Remove the '#/' 
     parts = ref[2:].split("/")
     ref_obj = openapi_spec
     
@@ -25,7 +24,7 @@ def resolve_ref(ref: str, openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
     return ref_obj if isinstance(ref_obj, dict) else {}
 
 def extract_schema_properties(schema: Dict[str, Any], openapi_spec: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract properties from schema, resolving refs """
+    """extract properties from schema, resolving refs """
     if "$ref" in schema:
         resolved_schema = resolve_ref(schema["$ref"], openapi_spec)
         if resolved_schema:
@@ -36,7 +35,7 @@ def extract_schema_properties(schema: Dict[str, Any], openapi_spec: Dict[str, An
     result = {}
     
     for prop_name, prop_schema in props.items():
-        # Handle nested $ref 
+        #if nested $ref 
         if "$ref" in prop_schema:
             prop_schema = resolve_ref(prop_schema["$ref"], openapi_spec) or prop_schema
         
@@ -52,37 +51,35 @@ def extract_schema_properties(schema: Dict[str, Any], openapi_spec: Dict[str, An
             "pattern": prop_schema.get("pattern"),
             "description": prop_schema.get("description")
         }
-        # Remove None values
+        #none values
         result[prop_name] = {k: v for k, v in result[prop_name].items() if v is not None}
     
     return result
 
 def parse_openapi_content(content: str) -> Dict[str, Any]:
-    """Parse OpenAPI content from either JSON or YAML format"""
+    """Parse OpenAPI content JSON or YAML format"""
     try:
-        # Try JSON first
         return json.loads(content)
     except json.JSONDecodeError:
         try:
-            # Try YAML if JSON fails
             return yaml.safe_load(content)
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid OpenAPI format. Must be valid JSON or YAML. Error: {e}")
 
 async def extract_endpoints(openapi_json: Dict[str, Any], project_id: int, session: AsyncSession):
-    """Extract endpoints from OpenAPI specification and save to database"""
+    """extract endpoints from openAPI and save to db"""
     paths = openapi_json.get("paths", {})
 
     for path, methods in paths.items():
         for method, details in methods.items():
             if method.lower() in ['get', 'post', 'put', 'delete', 'patch', 'head', 'options']:
-                # Generate AI summary
+                #AI summary
                 summary = await generate_description(method.upper(), path)
 
-                # Extract request body and parameters
+                #extract request body and parameters
                 request_body = {}
 
-                # === 1. Handle requestBody with content ===
+                # === 1. Handle requestBody ===
                 if "requestBody" in details:
                     request_body_info = details["requestBody"]
                     content = request_body_info.get("content", {})
@@ -104,7 +101,7 @@ async def extract_endpoints(openapi_json: Dict[str, Any], project_id: int, sessi
                         request_body["fields"] = {}
                     
                     for param in details["parameters"]:
-                        param_in = param.get("in")  # query, path, header, cookie
+                        param_in = param.get("in")  
                         name = param.get("name")
                         schema = param.get("schema", {})
                         param_type = schema.get("type", "string")
@@ -112,7 +109,7 @@ async def extract_endpoints(openapi_json: Dict[str, Any], project_id: int, sessi
                         if name:  
                             request_body["fields"][name] = {
                                 "type": param_type,
-                                "in": param_in,
+                                "in": param_in,  # THIS IS THE KEY FIX
                                 "required": param.get("required", False),
                                 "title": schema.get("title", name),
                                 "description": param.get("description"),
@@ -123,16 +120,16 @@ async def extract_endpoints(openapi_json: Dict[str, Any], project_id: int, sessi
                                 "maxLength": schema.get("maxLength"),
                                 "pattern": schema.get("pattern")
                             }
-                            # Remove None values
+                            #none values
                             request_body["fields"][name] = {
                                 k: v for k, v in request_body["fields"][name].items() 
                                 if v is not None
                             }
 
-                # Check if requires authentication
+                #requires authentication check
                 requires_auth = "security" in details and len(details["security"]) > 0
 
-                # Create endpoint object
+                #endpoint object
                 endpoint = Endpoint(
                     project_id=project_id,
                     path=path,
