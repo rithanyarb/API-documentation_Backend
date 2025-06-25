@@ -13,3 +13,4 @@ openai
 gitpython
 pytest
 pytest-asyncio
+itsdangerous
