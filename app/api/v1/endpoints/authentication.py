@@ -14,7 +14,7 @@ import os
 
 router = APIRouter()
 
-#OAuth setup
+# OAuth setup
 oauth = OAuth()
 oauth.register(
     name='google',
@@ -29,6 +29,8 @@ oauth.register(
 # JWT 
 SECRET_KEY = settings.SECRET_KEY
 ALGORITHM = "HS256"
+
+FRONTEND_URL = settings.FRONTEND_URL
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     to_encode = data.copy()
@@ -98,14 +100,15 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         
         access_token = create_access_token(data={"sub": user_id, "email": user_email})
         
-        response = RedirectResponse(url="http://localhost:5173/?auth=success")
+        response = RedirectResponse(url=f"{FRONTEND_URL}/?auth=success")
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
-            secure=False, 
-            samesite="lax",
-            max_age=86400  
+            secure=True,  
+            samesite="none",  
+            max_age=86400,
+            domain=None  
         )
         
         return response
@@ -114,7 +117,7 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         print(f"Auth error: {e}")
         import traceback
         traceback.print_exc()
-        return RedirectResponse(url="http://localhost:5173/?auth=error&message=auth_failed")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?auth=error&message=auth_failed")
 
 @router.get("/user")
 async def get_user(access_token: str = Cookie(None), db: AsyncSession = Depends(get_db)):
@@ -155,7 +158,7 @@ async def get_user(access_token: str = Cookie(None), db: AsyncSession = Depends(
 @router.post("/logout")
 async def logout():
     """Logout user"""
-    response = RedirectResponse(url="http://localhost:5173")
+    response = RedirectResponse(url=FRONTEND_URL)
     response.delete_cookie("access_token")
     return response
 
@@ -167,5 +170,6 @@ async def debug_urls(request: Request):
         "base_url": str(request.base_url),
         "url": str(request.url),
         "callback_url": str(request.url_for('auth_callback')),
+        "frontend_url": FRONTEND_URL,
         "client_id": settings.CLIENT_ID[:10] + "..." if settings.CLIENT_ID else "NOT_SET"
     }
