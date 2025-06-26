@@ -46,20 +46,21 @@ async def login(request: Request):
     print(f"Redirect URI: {redirect_uri}")
     print(f"Request URL: {request.url}")
     print(f"Request base URL: {request.base_url}")
+    print(f"Frontend URL: {FRONTEND_URL}")
     print(f"==================")
     
     return await oauth.google.authorize_redirect(request, redirect_uri)
 
 @router.get("/callback")
 async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
-    """Minimal callback endpoint"""
+    """Enhanced callback endpoint with better cookie handling"""
     print(f"=== DEBUG CALLBACK ===")
     print(f"Query params: {dict(request.query_params)}")
     print(f"Request URL: {request.url}")
+    print(f"Frontend URL: {FRONTEND_URL}")
     print(f"=====================")
     
     try:
-        # Get token from Google
         token = await oauth.google.authorize_access_token(request)
         user_info = token.get('userinfo')
         
@@ -80,7 +81,7 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
             print(f"Creating new user: {user_email}")
             db_user = User(
                 email=user_email,
-                name=user_name or user_email.split("@")[0],  # Use name or fallback to email prefix
+                name=user_name or user_email.split("@")[0],
                 is_active=True,
                 google_id=user_id,
                 picture=user_pic or ""
@@ -100,17 +101,21 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         
         access_token = create_access_token(data={"sub": user_id, "email": user_email})
         
-        response = RedirectResponse(url=f"{FRONTEND_URL}/?auth=success")
+        redirect_url = f"{FRONTEND_URL}/?auth=success&token={access_token}"
+        response = RedirectResponse(url=redirect_url)
+        
         response.set_cookie(
             key="access_token",
             value=access_token,
             httponly=True,
             secure=True,  
             samesite="none",  
-            max_age=86400,
-            domain=None  
+            max_age=86400,  
+            domain=None,  
+            path="/"  
         )
         
+        print(f"Setting cookie and redirecting to: {redirect_url}")
         return response
         
     except Exception as e:
@@ -120,15 +125,30 @@ async def auth_callback(request: Request, db: AsyncSession = Depends(get_db)):
         return RedirectResponse(url=f"{FRONTEND_URL}/?auth=error&message=auth_failed")
 
 @router.get("/user")
-async def get_user(access_token: str = Cookie(None), db: AsyncSession = Depends(get_db)):
-    """Get current user with full profile info"""
-    if not access_token:
+async def get_user(request: Request, access_token: str = Cookie(None), db: AsyncSession = Depends(get_db)):
+    """Get current user with enhanced token handling"""
+    print(f"=== DEBUG USER ENDPOINT ===")
+    print(f"Cookie access_token: {'Present' if access_token else 'Missing'}")
+    print(f"Request headers: {dict(request.headers)}")
+    print(f"Request cookies: {dict(request.cookies)}")
+    
+    token = access_token
+    
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+    
+    if not token:
+        print("No token found in cookie or header")
         raise HTTPException(status_code=401, detail="Not authenticated")
     
     try:
-        payload = jwt.decode(access_token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         user_email = payload.get("email")
+        
+        print(f"Token decoded successfully for user: {user_email}")
         
         result = await db.execute(
             select(User).where(User.google_id == user_id)
@@ -152,14 +172,15 @@ async def get_user(access_token: str = Cookie(None), db: AsyncSession = Depends(
                 "picture": ""
             }
                 
-    except JWTError:
+    except JWTError as e:
+        print(f"JWT Error: {e}")
         raise HTTPException(status_code=401, detail="Invalid token")
 
 @router.post("/logout")
 async def logout():
     """Logout user"""
     response = RedirectResponse(url=FRONTEND_URL)
-    response.delete_cookie("access_token")
+    response.delete_cookie("access_token", path="/", samesite="none", secure=True)
     return response
 
 # Debug endpoints
